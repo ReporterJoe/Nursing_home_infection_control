@@ -1,0 +1,56 @@
+#This MySQL code was used to crunch nursing home citation rates for infection control.
+
+#The first step was uploading two .csv files -- providerinfo_download and healthdeficiencies_download -- from a set of zipped files downloaded from CMS at this link: https://data.medicare.gov/views/bg9k-emty/files/6ef81c64-2ebd-4ece-93af-8e462427939a?content_type=&filename=NursingHomeCompare_Revised_Flatfiles.zip
+
+#Next, we separate infection-control citations from other citations:
+drop table if exists national_raw_infec_control; create table national_raw_infec_control as select * from  healthdeficiencies_download where left(survey_date_output,4)>2015 and (tag='0880' or tag='0441');
+
+#Next, we create a table that lists a facility only once, no matter how many times it was cited, but also creates a field with the number of citations:
+drop table if exists national_home_count_infec_control; create table national_home_count_infec_control as select provnum, state, count(state) as cite_count from national_raw_infec_control group by provnum, state;
+
+#Next we create a count, per state, of every facility that has at least one citation:
+drop table if exists national_count_infec_control_cite_sites; create table national_count_infec_control_cite_sites as select state, count(state) as sites_cited from national_home_count_infec_control group by state;
+
+#Next, we create a count of every facility in each state, regardless of whether they've ever been cited:
+drop table if exists national_provider_count; create table national_provider_count as select state, count(state) as total_providers from providerinfo_download where state <>'' and state <>'GU' and state <>'PR' group by state;
+
+#Next, we join our lists to create a table that has the state, total number of providers and, of those, the number that has been cited for infection control:
+drop table if exists states_providers_cited_stats; create table states_providers_cited_stats as select a.*, b.sites_cited from national_provider_count a left join national_count_infec_control_cite_sites b on a.state=b.state;
+
+#IMPORTANT# The result can be exported into Excel for a final rate tabulation before continuing on
+
+#To create a deeper look at Illinois, we performed a similar analysis:
+
+#First we sliced off the Illinois citations:
+drop table if exists IL_cite_counts; create table IL_cite_counts as select * from national_home_count_infec_control where state='il';
+
+#Then, we did a count of how many homes had each number of citations:
+drop table if exists IL_cite_counts_grouped; create table IL_cite_counts_grouped as select cite_count as number_citations, count(cite_count) as number_homes from IL_cite_counts group by cite_count order by cite_count asc;
+
+#IMPORTANT# The result can be exported into Excel for a look at Illinois' statistics
+
+#To create a deeper look at metro Chicago, we limited IL to the six-county region around Chicago, but did it a different way to grab more detailed info on each facility:
+
+#First, we carved out metro Chicago nursing homes:
+drop table if exists Metro_Chicago_nursing_homes; create table Metro_Chicago_nursing_homes as select * from providerinfo_download where state = 'il' and (county_name='cook' or county_name='Du Page' or county_name='Kane' or county_name='lake' or county_name='mc henry' or county_name='will');
+
+#Then, we created an optional index to help with next step:
+create index provnum on Metro_Chicago_nursing_homes(provnum);
+
+#Then, we matched to all citations: 
+drop table if exists Metro_Chicago_NH_cited; create table Metro_Chicago_NH_cited as select b.* from Metro_Chicago_nursing_homes a left join healthdeficiencies_download b on a.provnum=b.provnum;
+
+#Then, we limited to infection control citations:
+drop table if exists Metro_Chicago_NH_cited_infec_control; create table Metro_Chicago_NH_cited_infec_control as select * from  Metro_Chicago_NH_cited where tag='0880' or tag='0441';
+
+#Then, we created a count of how many times each home had been cited:
+drop table if exists Metro_Chicago_NH_cited_infec_control_count; create table Metro_Chicago_NH_cited_infec_control_count as select provnum, provname, address, city, state, zip, count(zip) as cite_count from Metro_Chicago_NH_cited_infec_control group by provnum, provname, address, city, state, zip order by count(zip) desc;
+
+#Finally, we added a bunch of additional fields to help with the review:
+drop table if exists Metro_Chicago_NH_cited_infec_control_count_with_ratings; create table Metro_Chicago_NH_cited_infec_control_count_with_ratings as select a.*, b.BEDCERT, b.RESTOT, b.CERTIFICATION, b.INHOSP, b.LBN, b.PARTICIPATION_DATE, b.CCRC_FACIL, b.SFFStatus, b.ABUSE_ICON, b.OldSurvey, b.CHOW_LAST_12MOS, b.RESFAMCOUNCIL, b.SPRINKLER_STATUS, b.Overall_Rating, b.overall_rating_fn, b.SURVEY_RATING, b.survey_rating_fn, b.Quality_Rating, b.quality_rating_fn, b.LS_Quality_Rating, b.LS_quality_rating_fn, b.SS_Quality_Rating, b.SS_quality_rating_fn, b.Staffing_Rating, b.staffing_rating_fn, b.RN_staffing_rating, b.RN_staffing_rating_fn, b.STAFFING_FLAG, b.PT_STAFFING_FLAG, b.AIDHRD, b.VOCHRD, b.RNHRD, b.TOTLICHRD, b.TOTHRD, b.PTHRD, b.CM_AIDE, b.CM_LPN, b.CM_RN, b.CM_TOTAL, b.ADJ_AIDE, b.ADJ_LPN, b.ADJ_RN, b.ADJ_TOTAL, b.CYCLE_1_SURVEY_DATE, b.cycle_1_defs, b.cycle_1_NfromDefs, b.cycle_1_NfromComp, b.cycle_1_defs_score, b.cycle_1_NumRevis, b.cycle_1_Revisit_Score, b.cycle_1_Total_Score, b.CYCLE_2_SURVEY_DATE, b.cycle_2_defs, b.cycle_2_NfromDefs, b.cycle_2_NfromComp, b.cycle_2_defs_score, b.cycle_2_NumRevis, b.cycle_2_Revisit_Score, b.cycle_2_Total_Score, b.CYCLE_3_SURVEY_DATE, b.cycle_3_defs, b.cycle_3_NfromDefs, b.cycle_3_NfromComp, b.cycle_3_defs_score, b.cycle_3_NumRevis, b.cycle_3_Revisit_Score, b.cycle_3_Total_Score, b.WEIGHTED_ALL_CYCLES_SCORE, b.INCIDENT_CNT, b.CMPLNT_CNT, b.FINE_CNT, b.FINE_TOT, b.PAYDEN_CNT, b.TOT_PENLTY_CNT, b.FILEDATE from Metro_Chicago_NH_cited_infec_control_count a left join providerinfo_download b on a.provnum=b.provnum;
+
+#To create a ranked list, we wrote the following:
+select * from Metro_Chicago_NH_cited_infec_control_count_with_ratings order by cite_count desc;
+
+
+
